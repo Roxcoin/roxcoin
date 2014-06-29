@@ -2546,17 +2546,6 @@ bool LoadBlockIndex(bool fAllowNew)
 		block.nNonce = fTestNet ? 1760524 : 1760524;
 
 
-		uint256 hash = block.GetHash();
-
-		if (hash != (fTestNet ? hashGenesisBlockTestNet : hashGenesisBlock))
-		{
-			uint256 hashTarget = CBigNum().SetCompact(block.nBits).getuint256();
-			while (block.GetHash() > hashTarget)
-			{
-				block.nNonce++;
-			}
-			block.print();
-		}
         //// debug print
         assert(block.hashMerkleRoot == uint256("0x4876c27da28cf97e100b1d4ece566d4aee78cc91b9cbf26479810e90c18ae20d"));
         block.print();
