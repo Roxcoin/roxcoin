@@ -50,6 +50,9 @@ int nNewCoinbaseMaturity = 100;
 CBlockIndex* pindexGenesisBlock = NULL;
 int nBestHeight = -1;
 
+int nLastPowBlock = LAST_POW_BLOCK;
+int nNewInterestFork = NEW_INTEREST_FORK;
+
 uint256 nBestChainTrust = 0;
 uint256 nBestInvalidTrust = 0;
 
@@ -997,7 +1000,7 @@ uint256 WantedByOrphan(const CBlock* pblockOrphan)
 int64_t GetProofOfWorkReward(int64_t nFees)
 {
     int64_t nSubsidy = 0;
-    if(pindexBest->nHeight <= LAST_POW_BLOCK)
+	if (pindexBest->nHeight <= nLastPowBlock)
         nSubsidy = 3125 * COIN;
 
     if (fDebug && GetBoolArg("-printcreation"))
@@ -1009,24 +1012,36 @@ int64_t GetProofOfWorkReward(int64_t nFees)
 /** Get the current yearly stake interest rate in cents (1 CENT = 1%)
  Minimum rate is 1%
  */
-uint64_t GetInterestRate(bool wholeCents)
+uint64_t GetInterestRate(const CBlockIndex* pindexLast, bool wholeCents)
 {
-    double weight = GetPoSKernelPS();
+	double weight;
+
+	// Post fork to new weight calculation
+
+	if (pindexLast && pindexLast->nHeight > nNewInterestFork)
+
+		weight = GetPoSKernelPS(pindexLast);
+	else
+		weight = GetPoSKernelPS();
+
     uint64_t rate = COIN_YEAR_REWARD;
     if(weight > 16384)
         rate = std::max(COIN_YEAR_REWARD,
                         std::min(static_cast<int64_t>(COIN_YEAR_REWARD * log(weight / 16384.0)),
-                                8*COIN_YEAR_REWARD));
+                                8 * COIN_YEAR_REWARD));
     return wholeCents ? 100 * rate : rate;
 }
 
 // miner's coin stake reward based on coin age spent (coin-days)
-int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees)
+int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees, const CBlockIndex* pindexLast)
 {
-    int64_t nSubsidy = nCoinAge * GetInterestRate() * 33 / (365 * 33 + 8);
-    
-    if(pindexBest->nMoneySupply + nSubsidy > MAX_MONEY)
-        return 0;
+	if (pindexLast == NULL) // genesis block or invalid pointer
+		return 0;
+
+	int64_t nSubsidy = nCoinAge * GetInterestRate(pindexLast) * 33 / (365 * 33 + 8);
+
+	if (pindexLast->nMoneySupply + nSubsidy > MAX_MONEY)
+		return 0;
 
     if (fDebug && GetBoolArg("-printcreation"))
         printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRId64"\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
@@ -1616,7 +1631,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
         if (!vtx[1].GetCoinAge(txdb, nCoinAge))
             return error("ConnectBlock() : %s unable to get coin age for coinstake", vtx[1].GetHash().ToString().substr(0,10).c_str());
 
-        int64_t nCalculatedStakeReward = GetProofOfStakeReward(nCoinAge, nFees);
+		int64_t nCalculatedStakeReward = GetProofOfStakeReward(nCoinAge, nFees, pindex ? pindex->pprev : NULL);
 
         if (nStakeReward > nCalculatedStakeReward)
             return DoS(100, error("ConnectBlock() : coinstake pays too much(actual=%"PRId64" vs calculated=%"PRId64")", nStakeReward, nCalculatedStakeReward));
@@ -2146,10 +2161,10 @@ bool CBlock::AcceptBlock()
     CBlockIndex* pindexPrev = (*mi).second;
     int nHeight = pindexPrev->nHeight+1;
 
-    if (IsProofOfStake() && nHeight < LAST_POW_BLOCK)
-        return DoS(100, error("AcceptBlock() : reject proof-of-stake at height %d <= %d", nHeight, LAST_POW_BLOCK));
-    
-    if (IsProofOfWork() && nHeight > LAST_POW_BLOCK)
+	if (IsProofOfStake() && nHeight < nLastPowBlock)
+		return DoS(100, error("AcceptBlock() : reject proof-of-stake at height %d <= %d", nHeight, nLastPowBlock));
+
+	if (IsProofOfWork() && nHeight > nLastPowBlock)
         return DoS(100, error("AcceptBlock() : reject proof-of-work at height %d", nHeight));
 
     // Check proof-of-work or proof-of-stake
